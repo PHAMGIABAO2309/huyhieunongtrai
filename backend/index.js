@@ -3,38 +3,62 @@ const mysql = require('mysql2/promise');
 const cors = require('cors');
 
 const app = express();
-const port = 5000;
 
-app.use(cors());
+// Sử dụng process.env.PORT cho Render (bắt buộc)
+const PORT = process.env.PORT || 5000;
+
+// Cấu hình CORS - cho phép Vercel và localhost
+app.use(cors({
+  origin: [
+    'http://localhost:3000',               // dev React/Vite
+    'http://localhost:5173',               // Vite default
+    'https://your-frontend-domain.vercel.app',  // thay bằng domain Vercel thật của bạn
+    // Nếu dùng preview branches: process.env.NODE_ENV === 'development' ? '*' : [...]
+  ],
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true,
+}));
+
 app.use(express.json());
 
-
-
-
-// Cấu hình kết nối MySQL
-const pool = mysql.createPool({
-  host: 'localhost',
-  user: 'root',           // thay bằng user của bạn
-  password: '',           // thay bằng password
-  database: 'xunongtrai',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
+// Health check route (Render dùng để kiểm tra service live)
+app.get('/', (req, res) => {
+  res.json({
+    status: 'ok',
+    message: 'Backend huyhieunongtrai đang chạy trên Render',
+    env: process.env.NODE_ENV || 'development',
+  });
 });
 
-// Test kết nối
-pool.getConnection()
-  .then(conn => {
+// Cấu hình kết nối MySQL từ environment variables (Render sẽ inject)
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'xunongtrai',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0,
+  // Nếu DB yêu cầu SSL (PlanetScale, Aiven, v.v. thường bắt buộc)
+  // ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : null,
+});
+
+// Test kết nối khi start server
+(async () => {
+  try {
+    const conn = await pool.getConnection();
     console.log('MySQL connected successfully');
     conn.release();
-  })
-  .catch(err => console.error('MySQL connection failed:', err));
+  } catch (err) {
+    console.error('MySQL connection failed:', err.message);
+  }
+})();
 
-// API lấy tất cả dữ liệu
-// API lấy tất cả dữ liệu
+// API lấy tất cả dữ liệu hành trình
 app.get('/api/hanhtrinh', async (req, res) => {
   try {
-    // Lấy tất cả các ngày và tổng xu trước
     const [days] = await pool.query(`
       SELECT h.id, h.ngay, h.tong_xu
       FROM hanhtrinh h
@@ -43,7 +67,6 @@ app.get('/api/hanhtrinh', async (req, res) => {
 
     const records = {};
 
-    // Với mỗi ngày, lấy riêng các lượt thu hoạch và xây dựng mảng JSON thủ công
     for (const day of days) {
       const [luotRows] = await pool.query(`
         SELECT 
@@ -53,18 +76,15 @@ app.get('/api/hanhtrinh', async (req, res) => {
           created_at
         FROM luot_thu_hoach
         WHERE ngay_id = ?
-        ORDER BY created_at ASC  -- hoặc theo thứ tự bạn muốn
+        ORDER BY created_at ASC
       `, [day.id]);
 
-      // Chuyển thành mảng object JSON bằng JS (an toàn và tương thích)
-      const luot = luotRows.map(row => ({
+      records[day.ngay] = luotRows.map(row => ({
         id: row.id,
         so_xu: row.so_xu,
         thoi_gian: row.thoi_gian,
-        created_at: row.created_at
+        created_at: row.created_at,
       }));
-
-      records[day.ngay] = luot;
     }
 
     res.json(records);
@@ -78,8 +98,11 @@ app.get('/api/hanhtrinh', async (req, res) => {
 app.post('/api/luot', async (req, res) => {
   const { ngay, so_xu, thoi_gian } = req.body;
 
+  if (!ngay || !so_xu || !thoi_gian) {
+    return res.status(400).json({ error: 'Thiếu thông tin bắt buộc' });
+  }
+
   try {
-    // Tìm hoặc tạo ngày
     let [rows] = await pool.query('SELECT id FROM hanhtrinh WHERE ngay = ?', [ngay]);
     let ngayId;
 
@@ -93,13 +116,11 @@ app.post('/api/luot', async (req, res) => {
       ngayId = rows[0].id;
     }
 
-    // Thêm lượt
     await pool.query(
       'INSERT INTO luot_thu_hoach (ngay_id, so_xu, thoi_gian) VALUES (?, ?, ?)',
       [ngayId, so_xu, thoi_gian]
     );
 
-    // Cập nhật tổng xu trong ngày
     await pool.query(`
       UPDATE hanhtrinh h
       SET tong_xu = (
@@ -110,8 +131,8 @@ app.post('/api/luot', async (req, res) => {
 
     res.status(201).json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Lỗi server' });
+    console.error('Lỗi thêm lượt:', err);
+    res.status(500).json({ error: 'Lỗi server', details: err.message });
   }
 });
 
@@ -120,14 +141,20 @@ app.delete('/api/luot/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    await pool.query('DELETE FROM luot_thu_hoach WHERE id = ?', [id]);
+    const [result] = await pool.query('DELETE FROM luot_thu_hoach WHERE id = ?', [id]);
+    
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ error: 'Không tìm thấy lượt' });
+    }
+
     res.json({ success: true });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Lỗi server' });
+    console.error('Lỗi xóa lượt:', err);
+    res.status(500).json({ error: 'Lỗi server', details: err.message });
   }
 });
 
-app.listen(port, () => {
-  console.log(`Server chạy tại http://localhost:${port}`);
+// Khởi động server
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server chạy tại http://0.0.0.0:${PORT} (Render port: ${process.env.PORT || 'local'})`);
 });
