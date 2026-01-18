@@ -12,7 +12,7 @@ app.use(cors({
   origin: [
     'http://localhost:3000',               // dev React/Vite
     'http://localhost:5173',               // Vite default
-    'https://your-frontend-domain.vercel.app',  // thay bằng domain Vercel thật của bạn
+    'https://huyhieunongtrai.vercel.app',  // thay bằng domain Vercel thật của bạn
     // Nếu dùng preview branches: process.env.NODE_ENV === 'development' ? '*' : [...]
   ],
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS', 'PATCH'],
