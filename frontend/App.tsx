@@ -5,7 +5,10 @@ import {
 import { RecordsMap, CoinEntry } from './types';
 import { formatXU, getTodayStr, formatTime, evaluateAmount } from './utils/formatters';
 
-const API_BASE = 'http://localhost:5000/api';
+// Sử dụng biến môi trường Vite (Vercel sẽ đọc từ dashboard)
+const API_BASE = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api` 
+  : 'http://localhost:5000/api';  // fallback cho dev local
 
 const App: React.FC = () => {
   const [records, setRecords] = useState<RecordsMap>({});
@@ -22,15 +25,21 @@ const App: React.FC = () => {
     const loadData = async () => {
       try {
         setLoading(true);
+        setError(null); // reset error khi retry
         const res = await fetch(`${API_BASE}/hanhtrinh`);
         if (!res.ok) {
-          throw new Error(`Lỗi HTTP ${res.status}: ${await res.text()}`);
+          const errText = await res.text().catch(() => 'Unknown error');
+          throw new Error(`Lỗi HTTP ${res.status}: ${errText}`);
         }
         const data = await res.json() as RecordsMap;
         setRecords(data);
       } catch (err: any) {
         console.error('Lỗi tải dữ liệu:', err);
-        setError('Không kết nối được với backend. Kiểm tra server có đang chạy không?');
+        setError(
+          err.message.includes('Failed to fetch') 
+            ? 'Không kết nối được với backend (có thể server đang khởi động lạnh, thử lại sau 30s). Kiểm tra console để xem chi tiết.'
+            : `Lỗi: ${err.message}. Backend có thể đang gặp vấn đề kết nối DB.`
+        );
       } finally {
         setLoading(false);
       }
@@ -45,7 +54,7 @@ const App: React.FC = () => {
       .reduce((sum, entry) => sum + entry.so_xu, 0);
   }, [records]);
 
-  // Sắp xếp ngày từ mới nhất → cũ nhất (dùng Date để chính xác)
+  // Sắp xếp ngày từ mới nhất → cũ nhất
   const sortedDates = useMemo(() => {
     return Object.keys(records).sort((a, b) => {
       return new Date(b).getTime() - new Date(a).getTime();
@@ -77,11 +86,11 @@ const App: React.FC = () => {
       setAmountInput('');
       setNewTime(formatTime(new Date()));
 
-      // Tải lại dữ liệu
+      // Refresh data
       const refreshed = await fetch(`${API_BASE}/hanhtrinh`).then(r => r.json());
       setRecords(refreshed);
     } catch (err: any) {
-      alert(`Không lưu được: ${err.message}`);
+      alert(`Không lưu được: ${err.message}. Nếu chậm, backend Render free tier có thể đang wake up.`);
     } finally {
       setIsSaving(false);
     }
@@ -102,11 +111,10 @@ const App: React.FC = () => {
   };
 
   const getTimeColor = (timeStr: string) => {
-  const hourMatch = timeStr.match(/(\d{1,2})h/);
-  const hour = hourMatch ? parseInt(hourMatch[1], 10) : 0;
-  return hour >= 18 ? 'text-red-600' : 'text-emerald-600';
-};
-
+    const hourMatch = timeStr.match(/(\d{1,2})h/);
+    const hour = hourMatch ? parseInt(hourMatch[1], 10) : 0;
+    return hour >= 18 ? 'text-red-600' : 'text-emerald-600';
+  };
 
   const currentPreview = useMemo(() => evaluateAmount(amountInput), [amountInput]);
 
@@ -114,7 +122,7 @@ const App: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50">
         <div className="text-xl font-semibold text-slate-600 animate-pulse">
-          Đang tải dữ liệu từ MySQL...
+          Đang tải dữ liệu từ backend Render...
         </div>
       </div>
     );
