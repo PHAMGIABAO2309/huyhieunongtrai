@@ -8,6 +8,13 @@ const port = 5000;
 app.use(cors());
 app.use(express.json());
 
+// ✅ ROUTE ROOT (để Railway không báo Cannot GET /)
+app.get("/", (req, res) => {
+  res.send("Server Railway chạy OK 🚀");
+});
+
+
+
 // Cấu hình kết nối MySQL
 const pool = mysql.createPool({
   host: 'localhost',
