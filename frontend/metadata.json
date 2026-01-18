@@ -1,0 +1,5 @@
+{
+  "name": "Farm Coin Badge Tracker",
+  "description": "A comprehensive tracking tool for farm coin gold badges, allowing users to log daily harvests, visualize growth, and import data from screenshots using AI.",
+  "requestFramePermissions": []
+}
